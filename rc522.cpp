@@ -10,6 +10,8 @@
 #include <csignal>
 #include <cerrno>
 #include <cstring>
+#include <fstream>
+
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -75,6 +77,42 @@ constexpr unsigned int RST_LINE = 2;
 const char* RELAY_GPIO_CHIP = "/dev/gpiochip0";
 constexpr unsigned int RELAY_LINE = 17;
 
+// Speaker
+static constexpr const char* PWM_PATH = "/dev/bone/pwm/1/a";
+
+bool writePwmFile(const std::string& file, const std::string& value)
+{
+    std::ofstream out(std::string(PWM_PATH) + "/" + file);
+    if (!out.is_open()) {
+        return false;
+    }
+
+    out << value;
+    return out.good();
+}
+
+void beepAccessGranted()
+{
+    // 1 kHz, 50% duty cycle
+    if (!writePwmFile("period", "1000000")) {
+        return;
+    }
+
+    if (!writePwmFile("duty_cycle", "500000")) {
+        return;
+    }
+
+    // Speaker ON
+    if (!writePwmFile("enable", "1")) {
+        return;
+    }
+
+    // Beep for 100 ms
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+    // Speaker OFF
+    writePwmFile("enable", "0");
+}
 
 // ============================================================
 // Global handles
@@ -1034,6 +1072,7 @@ int main()
                         // ------------------------------------
 
                         relay_on();
+			beepAccessGranted();
 
 
                         // Keep relay energized for 5 seconds
