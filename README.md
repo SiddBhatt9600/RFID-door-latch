@@ -68,11 +68,16 @@ For this project:
 
 Install:
 
-    sudo cp BB-SPIDEV1-00A0.dtbo /lib/firmware/
+    sudo cp /path/to/BB-SPIDEV1-00A0.dtbo /lib/firmware/
 
 Enable in `/boot/uEnv.txt`:
 
     uboot_overlay_addr4=/lib/firmware/BB-SPIDEV1-00A0.dtbo
+
+Disable HMDI if not needed as it may interfere with SPI as well
+Uncomment these two lines:
+    `disable_uboot_overlay_video=1
+     disable_uboot_overlay_audio=1 `
 
 Reboot:
 
