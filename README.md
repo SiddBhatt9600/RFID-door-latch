@@ -215,6 +215,62 @@ P8.7  -> gpiochip1 line 2
 P9.23 -> gpiochip0 line 17
 ```
 
+## Debian 13 + Linux 6.18 SPI Setup
+
+The RC522 uses SPI1 CS0. On the Debian 13 + Linux 6.x setup, SPI1 is enabled through the U-Boot device-tree overlay mechanism.
+
+The important entries in `/boot/uEnv.txt` are:
+
+```text
+enable_uboot_overlays=1
+uboot_overlay_addr0=BB-SPIDEV1-00A0.dtbo
+```
+
+The `BB-SPIDEV1-00A0.dtbo` overlay enables SPI1 and exposes the SPI devices used by the RC522. The project uses CS0, resulting in:
+
+```text
+/dev/spidev1.0
+```
+
+After changing `/boot/uEnv.txt`, reboot the BeagleBone:
+
+```bash
+sudo reboot
+```
+
+Verify that the overlay was actually loaded:
+
+```bash
+ls -la /proc/device-tree/chosen/overlays/
+```
+
+The output should contain:
+
+```text
+BB-SPIDEV1-00A0.kernel
+```
+
+Then verify the SPI device:
+
+```bash
+ls -l /dev/spidev*
+```
+
+The RC522 device used by this project should be present:
+
+```text
+/dev/spidev1.0
+```
+
+If `spidev` is not loaded as a module on a particular installation, verify/load it with:
+
+```bash
+lsmod | grep spidev
+sudo modprobe spidev
+```
+
+The application itself does not need a special SPI setup beyond opening `/dev/spidev1.0`. The C++ implementation configures SPI mode 0, 8 bits per word, and 1 MHz; the Python implementation uses the same bus, chip-select, mode, and speed.
+
 ## Debian 13 + Linux 6.18 PWM Setup
 
 The working speaker setup depends on enabling the EHRPWM1 pinmux/PWM configuration on P9.14.
