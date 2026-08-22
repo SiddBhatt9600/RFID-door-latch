@@ -7,7 +7,7 @@ The project contains two working implementations:
 - `rc522_read.py` - Python implementation
 - `rc522.cpp` - C++17 implementation
 
-The system communicates with the RC522 over SPI, controls the RC522 reset line through GPIO using libgpiod, and controls an electronic lock through a 5 V relay module.
+The system communicates with the RC522 over SPI, controls the RC522 reset line through GPIO using libgpiod, controls an electronic lock through a 5 V relay module, and generates a 1 kHz PWM access-granted beep for 1 second.
 
 ## Hardware
 
@@ -62,7 +62,7 @@ The control circuit is:
 BBB P9.23 ───── 1kΩ ───── B
 ```
 
-The 10 kΩ resistor is a pull-up resistor. When the BD139 is OFF, it pulls the relay `IN` signal to approximately 5 V. When the BD139 is ON, it pulls the relay `IN` signal to GND.
+The 10 kΩ resistor is a pull-up resistor. When the BD139 is OFF, the relay `IN` signal is pulled to approximately 5 V. When the BD139 is ON, it pulls the relay `IN` signal to GND.
 
 The relay module is active-low:
 
@@ -118,6 +118,47 @@ The lock may use a different supply voltage from the 5 V relay control supply, p
 
 The 5 V supply powers the relay module's control side. The lock power supply is connected to the relay's switching contacts.
 
+### Speaker Module
+
+The project uses an external speaker module. The BeagleBone does not directly power the speaker from the GPIO pin. The GPIO/PWM pin is connected to the module's signal/input pin.
+
+The final working connection is:
+
+```text
+BeagleBone Black P9.14  ---- Speaker module IN / signal
+BeagleBone Black GND     ---- Speaker module GND
+Speaker module VCC      ---- Speaker module power supply
+```
+
+The important distinction is that **P9.14 is the signal connection**. It must not be connected to the speaker module's VCC pin.
+
+The speaker module ground is connected to BeagleBone GND so the PWM signal and module share the same reference.
+
+The same speaker module was previously verified using an ESP32 GPIO output. On the BeagleBone, the working signal path is:
+
+```text
+P9.14
+   |
+   v
+EHRPWM1A
+   |
+   v
+/dev/bone/pwm/1/a
+   |
+   v
+Speaker module IN
+```
+
+The access-granted sound is generated as a 1 kHz, 50% duty-cycle PWM signal for 1 second.
+
+```text
+Frequency:  1 kHz
+Duty cycle: 50%
+Duration:   1 second
+```
+
+The beep is triggered when an authorized RFID UID is detected and the electronic lock is unlocked.
+
 ## Power Distribution
 
 The project uses separate 5 V and 3.3 V rails.
@@ -143,7 +184,7 @@ The RC522 is powered from 3.3 V.
 
 The relay module is powered from 5 V.
 
-The BeagleBone GPIO never receives the 5 V relay signal. The BD139 provides the required interface between the 3.3 V GPIO and the 5 V relay input.
+The BeagleBone GPIO never receives the 5 V relay signal. The BD139 provides the interface between the 3.3 V GPIO and the 5 V relay input.
 
 ## Software Configuration
 
@@ -160,6 +201,11 @@ The BeagleBone GPIO never receives the 5 V relay signal. The BD139 provides the 
 | Relay GPIO | P9.23 |
 | Relay GPIO chip | `/dev/gpiochip0` |
 | Relay GPIO line | 17 |
+| Speaker PWM | `/dev/bone/pwm/1/a` |
+| Speaker pin | P9.14 |
+| PWM frequency | 1 kHz |
+| PWM duty cycle | 50% |
+| Access-granted beep | 1 second |
 | RC522 VersionReg | `0x92` |
 
 GPIO mappings:
@@ -168,6 +214,65 @@ GPIO mappings:
 P8.7  -> gpiochip1 line 2
 P9.23 -> gpiochip0 line 17
 ```
+
+## Debian 13 + Linux 6.18 PWM Setup
+
+The working speaker setup depends on enabling the EHRPWM1 pinmux/PWM configuration on P9.14.
+
+With the working Debian 13 + 6.18 configuration, the PWM interface is:
+
+```text
+/dev/bone/pwm/1/a
+```
+
+Enable/configure the 1 kHz beep with:
+
+```bash
+cd /dev/bone/pwm/1/a
+
+sudo sh -c 'echo 1000000 > period'
+sudo sh -c 'echo 500000 > duty_cycle'
+sudo sh -c 'echo 1 > enable'
+```
+
+Disable it with:
+
+```bash
+sudo sh -c 'echo 0 > enable'
+```
+
+Make sure U-Boot overlays are enabled in `/boot/uEnv.txt` and that the EHRPWM1 overlay is selected:
+
+```text
+enable_uboot_overlays=1
+uboot_overlay_addr1=BB-EHRPWM1-P9_14-P9_16.dtbo
+```
+
+After reboot, verify that the BeagleBone PWM interface exists:
+
+```bash
+ls -l /dev/bone/pwm/1/a
+```
+
+The working PWM output is then configured directly through that interface:
+
+```bash
+cd /dev/bone/pwm/1/a
+
+sudo sh -c 'echo 1000000 > period'
+sudo sh -c 'echo 500000 > duty_cycle'
+sudo sh -c 'echo 1 > enable'
+```
+
+This produces a 1 kHz, 50% duty-cycle tone.
+
+Stop the speaker with:
+
+```bash
+sudo sh -c 'echo 0 > enable'
+```
+
+For this project, `/dev/bone/pwm/1/a` is the known-good speaker PWM path. If this path is missing after a kernel/device-tree change, verify the EHRPWM1 overlay before changing the application code.
 
 ## Relay GPIO Control
 
@@ -245,27 +350,15 @@ sudo apt update
 sudo apt install python3-spidev python3-libgpiod
 ```
 
+The Python implementation uses the libgpiod 2.x Python API used by the known-good Debian 13 application, including `gpiod.LineSettings` and `request_lines()`.
+
 ### Run
 
 ```bash
 sudo python3 rc522_read.py
 ```
 
-The Python implementation opens SPI1 CS0, initializes the RC522, performs a hardware reset through P8.7, and continuously polls for RFID tags.
-
-Example output:
-
-```text
-Opening SPI...
-SPI opened
-Initializing GPIO...
-Resetting RC522...
-RC522 VersionReg = 0x92
-RC522 initialized
-Place RFID tag on the reader...
-
-UID: B6 CB 31 02
-```
+The Python implementation opens SPI1 CS0, initializes the RC522, performs a hardware reset through P8.7, initializes the relay on P9.23, polls for RFID tags, and generates the access-granted PWM beep.
 
 ## C++
 
@@ -276,12 +369,12 @@ sudo apt update
 sudo apt install g++ libgpiod-dev
 ```
 
-The C++ implementation uses the libgpiod C++ API.
+The C++ implementation uses the libgpiod API, Linux SPI, and the BeagleBone PWM sysfs interface.
 
 ### Build
 
 ```bash
-g++ -std=c++17 rc522.cpp -o rc522 -lgpiodcxx -lgpiod
+g++ -std=c++17 rc522.cpp -o rc522 -lgpiodcxx -lgpiod -pthread
 ```
 
 ### Run
@@ -346,21 +439,26 @@ Read UID
 Validate BCC
       |
       v
-Check authorized UID
-      |
-      v
-Access granted
+Check access
       |
       +------------------+
       |                  |
-      v                  v
-Activate relay       Access denied
+ Access granted      Access denied
       |
       v
-Power electronic lock
+Relay ON + 1 kHz beep
       |
       v
-Lock opens
+Lock powered
+      |
+      v
+Keep relay energized for 5 seconds
+      |
+      v
+Relay OFF
+      |
+      v
+Lock closes
 ```
 
 The REQA command is:
@@ -377,34 +475,51 @@ For ISO14443A anti-collision, the implementation uses:
 
 The anti-collision response contains four UID bytes followed by the BCC. The BCC is validated by XORing the four UID bytes.
 
-## Access Control
+## Access-Granted Beep
 
-The intended access-control behavior is:
+The speaker is driven when a new RFID UID is detected and the access-control sequence begins.
+
+The PWM configuration is:
 
 ```text
-RFID card detected
-       |
-       v
-Read UID
-       |
-       v
-Compare UID against authorized UID
-       |
-       +------------------+
-       |                  |
-   Authorized        Unauthorized
-       |                  |
-       v                  v
-Relay ON              Relay OFF
-       |
-       v
-Lock powered
-       |
-       v
-Lock opens
+period     = 1,000,000 ns
+frequency  = 1 kHz
+duty_cycle = 500,000 ns
+duty        = 50%
+duration   = 1 second
 ```
 
-The relay is used as the interface between the low-voltage BeagleBone control system and the electronic lock.
+The sequence is:
+
+```text
+New RFID UID
+     |
+     v
+Relay ON
+     |
+     +---- Speaker ON
+     |       1 kHz, 50% duty
+     |       for 1 second
+     |
+     v
+Continue unlock interval
+     |
+     v
+After 5 seconds
+     |
+     v
+Relay OFF
+```
+
+The speaker PWM is implemented by writing directly to:
+
+```text
+/dev/bone/pwm/1/a/period
+/dev/bone/pwm/1/a/duty_cycle
+/dev/bone/pwm/1/a/enable
+```
+
+No WAV playback or PRU audio path is part of the current checkpoint.
 
 ## Project Structure
 
@@ -422,6 +537,7 @@ Python implementation using:
 ```text
 spidev
 libgpiod
+BeagleBone PWM interface
 ```
 
 ### `rc522.cpp`
@@ -430,18 +546,19 @@ C++17 implementation using:
 
 ```text
 Linux SPI
-libgpiod C++ API
+libgpiod
+BeagleBone PWM interface
 ```
 
-## Known-Good Configuration
+## Known-Good Checkpoint
 
-This repository is based on the working BeagleBone Black + RC522 + relay + electronic lock configuration.
+This repository is based on the working BeagleBone Black + RC522 + relay + electronic lock + speaker checkpoint.
 
 | Parameter | Value |
 |---|---|
 | Board | BeagleBone Black |
 | OS | Debian GNU/Linux 13 |
-| Kernel | 6.18.39-bone44 |
+| Kernel | 6.18.x-bone |
 | SPI | SPI1 CS0 |
 | SPI device | `/dev/spidev1.0` |
 | SPI mode | 0 |
@@ -455,6 +572,10 @@ This repository is based on the working BeagleBone Black + RC522 + relay + elect
 | Relay control transistor | BD139 |
 | Base resistor | 1 kΩ |
 | Relay IN pull-up | 10 kΩ to +5 V |
+| Speaker pin | P9.14 |
+| Speaker PWM path | `/dev/bone/pwm/1/a` |
+| Speaker tone | 1 kHz, 50% duty |
+| Beep duration | 1 second |
 | RC522 VersionReg | `0x92` |
 | Antenna | `TxControlReg = 0x83` |
 
