@@ -74,23 +74,6 @@ Enable in `/boot/uEnv.txt`:
 
     uboot_overlay_addr4=/lib/firmware/BB-SPIDEV1-00A0.dtbo
 
-Disable HMDI if not needed as it may interfere with SPI as well
-Uncomment these two lines:
-    `disable_uboot_overlay_video=1
-     disable_uboot_overlay_audio=1 `
-
-Reboot:
-
-    sudo reboot
-
-Verify:
-
-    ls /dev/spidev*
-
-Expected:
-
-    /dev/spidev1.0
-
 ## HDMI / Device Tree Overlay Warning
 
 The BeagleBone Black HDMI cape functionality can consume pins required
@@ -103,6 +86,18 @@ Unused HDMI functionality can be disabled in `/boot/uEnv.txt`:
 
     disable_uboot_overlay_video=1
     disable_uboot_overlay_audio=1
+
+Reboot:
+
+    sudo reboot
+
+Verify:
+
+    ls /dev/spidev*
+
+Expected:
+
+    /dev/spidev1.0
 
 For this project SPI1 uses:
 
